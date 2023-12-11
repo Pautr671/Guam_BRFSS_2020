@@ -1,0 +1,493 @@
+---
+title: "BRFSS Analysis (Guam 2020 dataset)"
+author: "Tristan_Paulino"
+date: "Last updated: 2023-12-10"
+output:
+  html_document:
+    df_print: paged
+  prettydoc::html_pretty:
+    theme: journal
+---
+
+# Introduction
+
+This documentation is supplementary to the manuscript draft "<i>The Epidemiology of Gout on Guam and the impact of areca nut</i>" which replicates the analysis, results, and displays the respective statistical tables. 
+
+Our main objectives were to:
+
+1. Estimate the current prevalence of gout in Guam utilizing the 2020 BRFSS data.
+2. Describe the relationship between areca nut and gout.
+
+### Step 1: Calling the libraries
+
+Note that I am using the `gtsummary` package to create nice and near publication-ready tables/regression outputs. This package can handle generating simple frequencies and automate regression/ANOVA tables.
+
+For all tables, I have reported
+
+1. Unweighted sample size (N)
+2. Unweighted sample (n)
+3. Weighted percent/proportion (%)
+
+
+```{r library, echo=TRUE, message=FALSE}
+library(tidyverse)
+library(haven)
+library(survey) 
+library(gtsummary)
+library(forcats)
+
+```
+### Step 2: Importing SPSS dataset file into R using the haven package 
+
+
+```{r data_upload, echo=TRUE, message=FALSE}
+
+# Read in provided spss file into R using haven package
+spss_data <- read_sav("GU20FINLvSplit_V3.SAV")   
+
+# BRFSS Variabales in crude dataset
+# v3 == Household Density Stratum Code
+# v4 == Primary Sampling Unit
+# v75 == Calculated Final Weight
+# v140 == Age stratified in 6 groups
+# SEXVAR == Respondent Sex
+# Ethnic1 == Ethnicity
+# v145 == Education Level Category
+# GoutDiag == Age of Gout Diagnosis
+# GoutMeds == Gout Medication Use
+# ALCDAY5 == Alcohol Use Last 30 days
+# SugarBev1 & SugarBev2 == consumption of fruit drinks and soda (two variables)
+# BetChw2 == current areca/betel nut use 
+# v148 == current smoking tobacco status
+# USENOW3 == current smokeless tobacco use
+# DIABETE4 == Diabetes diagnosis
+# CVDCRHD4 == Cardiovascular disease diagnosis
+# v142 == Obesity Status
+
+guam_data <- spss_data %>% 
+  select(v3,
+         v4,
+         v75,
+         SEXVAR,
+         v145,
+         Ethnic1,
+         v140,
+         GoutDiag,
+         GoutMeds,
+         ALCDAY5,
+         SugarBev1,
+         SugarBev2,
+         BetChw2,
+         SMOKDAY2,
+         USENOW3,
+         DIABETE4,
+         CVDCRHD4,
+         v142)
+```
+
+### Step 3: Data cleaning prior to analyses
+
+```{r data_wrangling, echo=TRUE, message=FALSE}
+# Data Cleaning & Re-coding 
+# Any unknown or missing value in a variable will be treated as "NA" and be excluded from analyses.
+
+guam_data <- guam_data %>%
+  mutate(
+    edu_status = as_factor(case_when(
+      v145 %in% c(1, 2) ~ "High School or below",
+      v145 == 3 ~ "Some College",
+      v145 == 4 ~ "College Graduate or higher",
+      v145 == 9 ~ NA,
+      TRUE ~ as.character(v145)
+    )),
+    sex = as_factor(case_when(
+      SEXVAR == 1 ~ "Male",
+      SEXVAR == 2 ~ "Female",
+      TRUE ~ as.character(SEXVAR)
+    )),
+    ethnicity = as_factor(case_when(
+      Ethnic1 %in% c(1, 15) ~ "CHamoru",
+      Ethnic1 == 2 ~ "Filipino",
+      Ethnic1 %in% c(9:14) ~ "Other Micronesian",
+      Ethnic1 %in% c(3, 4, 5, 6, 7, 8, 16, 17) ~ "Other",
+      Ethnic1 %in% c(26, 77, 99) ~ NA,
+      TRUE ~ as.character(Ethnic1)
+    )),
+    age = as_factor(case_when(
+      v140 == 1 ~ "18 to 24",
+      v140 == 2 ~ "25 to 34",
+      v140 == 3 ~ "35 to 44",
+      v140 == 4 ~ "45 to 54",
+      v140 == 5 ~ "55 to 64",
+      v140 == 6 ~ "55 to 64",
+      TRUE ~ as.character(v140)
+    )),
+    gout_status = as_factor(case_when(
+      GoutDiag <= 95 ~ "Yes",
+      GoutDiag == 96 ~ "No",
+      GoutDiag %in% c(97,99) ~ NA,
+      TRUE ~ as.character(GoutDiag)
+    )),
+    gout_med = as_factor(case_when(
+      GoutMeds == 1 ~ "Never",
+      GoutMeds %in% c(2,3) ~ "Sometimes",
+      GoutMeds == 4 ~ "Regularly",
+      GoutMeds == 5 ~ "Regularly",
+      GoutMeds %in% c(7,9) ~ NA,
+      TRUE ~ as.character(GoutMeds)
+    )),
+    alcohol = as_factor(case_when(
+      ALCDAY5 %in% c(777,999) ~ NA,
+      ALCDAY5 == 888 ~ "No",
+      ALCDAY5 >= 101 & ALCDAY5 <= 230 ~ "Yes"
+    )),
+    sugar_bev = as_factor(case_when(
+      SugarBev1 %in% c(777, 999) | SugarBev2 %in% c(777, 999) ~ NA,
+      SugarBev1 == 888 | SugarBev2 == 888 ~ "No",
+      TRUE ~ "Yes"
+    )),
+    betel_nut = as_factor(case_when(
+      BetChw2 %in% c(1,2) ~ "Yes",
+      BetChw2 == 3 ~ "No",
+      BetChw2 %in% c(7,9) ~ "No"
+    )),
+    smoking = as_factor(case_when(
+      SMOKDAY2 %in% c(1,2) ~ "Yes",
+      SMOKDAY2 == 3 ~ "No"
+    )),
+    smokless = as_factor(case_when(
+      USENOW3 %in% c(1,2) ~ "Yes",
+      USENOW3 == 3 ~ "No",
+      USENOW3 == 7 ~ NA
+    )),
+    diabetes = as_factor(case_when(
+      DIABETE4 %in% c(1,2) ~ "Yes",
+      DIABETE4 %in% c(3,4) ~ "No",
+      DIABETE4 == 7 ~ NA
+    )),
+    heart_disease = as_factor(case_when(
+      CVDCRHD4 == 1 ~ "Yes",
+      CVDCRHD4 == 2 ~ "No",
+      CVDCRHD4 == 7 ~ NA,
+    )),
+    obesity = as_factor(case_when(
+      v142 %in% c(1,2,3) ~ "No",
+      v142 == 4 ~ "Yes"
+    ))
+  )
+
+```
+
+### Step 4: Table 1.0 -- Demographic Description
+
+```{r table1, echo=TRUE, message=FALSE}
+# Creates the dataframe of demographic variables of interest plus BRFSS weights
+table1_df <- guam_data %>% 
+  select(
+    v3,
+    v4,
+    v75,
+    age,
+    sex,
+    ethnicity,
+    edu_status
+  )
+
+# Creates survey object, specifies variables vs. weight
+table1_survey <- svydesign(
+  ids = ~v4,
+  strata = ~v3,
+  weights = ~v75,
+  data = table1_df
+)
+
+# Creates Frequency Table of variables of interest
+table1 <- tbl_svysummary(table1_survey,
+               by = NULL,
+               digits = list(
+                 age ~ c(0,1),
+                 sex ~ c(0,1),
+                 ethnicity ~ c(0,1),
+                 edu_status ~ c(0,1)
+               ),
+               include = c(age,sex,ethnicity,edu_status),    
+               label = list(
+                 age ~ "Age",
+                 sex ~ "Sex",
+                 ethnicity ~ "Ethnicity",
+                 edu_status ~ "Education"),
+               statistic = list(
+                 all_categorical() ~ "{n_unweighted} ({p}%)"),
+               missing = "no"
+) %>% 
+  modify_header(
+    update = list(
+      stat_0 ~ "**Overall** N = {n_unweighted}")
+  ) %>% 
+  as_gt() %>%
+  gt::tab_header("Table 1: Demographic Description, Guam BRFSS 2020") %>% 
+  gt::tab_options(
+    table.font.size = "small",
+    data_row.padding = gt::px(1)
+  )
+
+```
+
+Here is what table 1 looks like. 
+
+```{r table1out, echo=TRUE, results='asis'}
+print(table1)
+```
+
+### Step 5: Table 2.0 Gout Prevalence & Gout Medication Use
+
+```{r table2, echo=TRUE, message=FALSE}
+
+table2_df <- guam_data %>% 
+  select(
+    v3,
+    v4,
+    v75,
+    gout_status,
+    gout_med
+  )
+
+table2_survey <- svydesign(
+  ids = ~v4,
+  strata = ~v3,
+  weights = ~v75,
+  data = table2_df
+)
+
+table2 <- tbl_svysummary(table2_survey,
+                         by = NULL,
+                         include = c(gout_status,gout_med),  
+                         label = list(
+                           gout_status ~ "Gout",
+                           gout_med ~ "Gout Medication Use"
+                           ),
+                         statistic = list(
+                           all_categorical() ~ "{n_unweighted} ({p}%)"),
+                         missing = "no"
+) %>% 
+  modify_header(
+    update = list(
+      stat_0 ~ "**Overall** N = {n_unweighted}")
+  ) %>% 
+  as_gt() %>%
+  gt::tab_header("Table 2: Gout Status & Medicine Use, Guam BRFSS 2020") %>% 
+  gt::tab_options(
+    table.font.size = "small",
+    data_row.padding = gt::px(1)
+  )
+
+```
+
+Here is what table 2 looks like. 
+
+```{r table2out, echo=TRUE, results='asis'}
+print(table2)
+```
+
+### Step 6: Table 3.0 Variables among Gout Participants.
+
+```{r table3, echo=TRUE, message=FALSE}
+
+# Creates the dataframe of variables of interest plus BRFSS weights
+table3_df <- guam_data %>% 
+  select(
+    v3,
+    v4,
+    v75,
+    gout_status,
+    gout_med,
+    ethnicity,
+    sex,
+    alcohol,
+    betel_nut,
+    smoking,
+    sugar_bev,
+    heart_disease,
+    diabetes,
+    obesity
+  )
+
+# Creates survey object, specifies variables vs. weight
+table3_survey <- svydesign(
+  ids = ~v4,
+  strata = ~v3,
+  weights = ~v75,
+  data = table3_df
+)  
+
+# Creates Table of variables of interest
+table3 <- tbl_svysummary(table3_survey,
+               by = gout_status,
+               missing = "no",
+               include = c(ethnicity,sex,alcohol,betel_nut,smoking,sugar_bev,heart_disease,diabetes,obesity),
+               label = list(ethnicity ~ "Ethnicity",
+                            sex ~ "Sex",
+                            alcohol ~ "Alcohol Consumption",
+                            betel_nut ~ "Betel Nut Use",
+                            smoking ~ "Smoking",
+                            sugar_bev ~ "Sugar Beverage Consumption",
+                            heart_disease ~ "Cardiovascular Disease",
+                            diabetes ~ "Diabetes",
+                            obesity ~ "Obesity"),
+               statistic = list(
+                 all_categorical() ~ "{n_unweighted} ({p}%)")
+) %>%
+  add_overall(
+    col_label = "**Overall**, N {n_unweighted}"
+  ) %>% 
+  modify_header(
+    update = list(
+      label ~ "**Factors** ",
+      stat_2 ~ "**Yes** N = {n_unweighted}",
+      stat_1 ~ "**No** N = {n_unweighted}"
+    )
+  ) %>% 
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Gout Status**") %>% 
+  add_p(pvalue_fun = ~ style_pvalue(.x, digits = 3)) %>% 
+  as_gt() %>%
+  gt::tab_header("Table 3: Factors among people with Gout, Guam 2020 BRFSS") %>% 
+  gt::tab_options(
+    table.font.size = "small",
+    data_row.padding = gt::px(1)
+  )
+
+```
+
+Here is what table 3 looks like. 
+
+```{r table3out, echo=TRUE, results='asis'}
+print(table3)
+```
+
+### Step 7: Table 4.0 
+Though I've done regressions in the past, it's not necessarily my forte. I conducted a logistic regression to see how well betel nut use can predict gout status. Based on this information, betel nut is not a good predictor for gout and not associated with it. This is also supported by the lack of significance observed in our chi-squre result (p value > 0.05)
+
+```{r table4, echo=TRUE, message=FALSE}
+# Creates the dataframe of betel nut use and gout variables plus BRFSS weights
+
+# Convert betel_nut to a factor if it's not already
+table4_df <- guam_data %>% 
+  select(
+    v3,
+    v4,
+    v75,
+    gout_status,
+    betel_nut
+  )
+
+table4_df$betel_nut <- relevel(table4_df$betel_nut, ref = "No")
+
+# Creates the survey object needed for the logistic regression 
+table4_survey <- svydesign(
+  ids = ~v4,
+  strata = ~v3,
+  weights = ~v75,
+  data = table4_df
+)
+
+# Fit logistic regression model
+logit_model <- svyglm(
+  formula = gout_status ~ betel_nut,
+  design = table4_survey,
+  family = binomial(link = "logit")
+)
+
+# Display model summary
+summary(logit_model)
+
+table_regression <- tbl_regression(logit_model, 
+                                   exponentiate = TRUE,
+                                   show_single_row = betel_nut,
+                                   label = list(
+                                     betel_nut ~ "Betel Nut Use"
+                                   ),
+                                   pvalue_fun= ~ style_pvalue(.x, digits = 3)
+                                   ) %>% 
+  as_gt() %>%
+  gt::tab_header("Table 4: Logistic Regression - Betel Nut Use & Gout") %>% 
+  gt::tab_options(
+    table.font.size = "small",
+    data_row.padding = gt::px(1)
+  )
+
+```
+
+Here is what table 4 looks like. 
+
+```{r table4out, echo=TRUE, results='asis'}
+print(table_regression)
+```
+
+### Validating BRFSS weights and results 
+```{r valid, echo=TRUE, message=FALSE}
+# Validating BRFSS weights and parameters (test variable & example == alcohol_consumption prevalence)
+
+################## Unweighted Data Analysis ########################
+# Calculate the total number of responses
+total_responses <- length(guam_data$alcohol)
+
+# Calculate the total number of cases
+alcohol_frequency <- table(guam_data$alcohol)
+
+# Calculate the percentages
+percentages <- prop.table(alcohol_frequency) * 100
+
+#Display the frequency table and percentages
+test_result <- data.frame(Response = names(alcohol_frequency),Frequency = as.numeric(alcohol_frequency), Percentage = percentages)
+
+```
+
+
+Here is what the <b> unweighted data </b> look like. 
+
+
+```{r valid1, echo=TRUE, results='asis'}
+knitr::kable(test_result, format = "markdown")
+```
+
+
+```{r valid2, echo=TRUE, message=FALSE}
+################## Weighted Data Analysis ########################
+
+# Create the survey design
+test_survey <- svydesign(
+  ids = ~v4,
+  strata = ~v3,
+  weights = ~v75,
+  data = guam_data
+)
+
+# Calculate weighted total number of responses
+total_responses <- sum(weights(test_survey))
+
+# Calculate the weighted frequency table
+weighted_alcohol_frequency <- svytable(~alcohol, design = test_survey)
+
+# Calculate the weighted percentages
+weighted_percentages <- prop.table(weighted_alcohol_frequency) * 100
+
+# Display the weighted frequency table and percentages
+test_weighted_result <- data.frame(Response = names(weighted_alcohol_frequency),
+                              Frequency = as.numeric(weighted_alcohol_frequency),
+                              Percentage = weighted_percentages)
+```
+
+
+Here is what the <b> weighted data </b> look like. 
+
+
+```{r valid3, echo=TRUE, results='asis'}
+knitr::kable(test_weighted_result, format = "markdown")
+```
+
+Sweet!! The weighted percents and unweighted n's match what's in the CDC website Prevalence tool!
+Check Guam 2020 alcohol consumption 30 days - https://www.cdc.gov/brfss/brfssprevalence/
+
+:D
+
+For `gtsummary` documentation please see: https://www.danieldsjoberg.com/gtsummary/index.html 
