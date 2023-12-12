@@ -326,6 +326,7 @@ table3_survey <- svydesign(
 table3 <- tbl_svysummary(table3_survey,
                by = gout_status,
                missing = "no",
+               percent = "row",
                include = c(ethnicity,sex,alcohol,betel_nut,smoking,sugar_bev,heart_disease,diabetes,obesity),
                label = list(ethnicity ~ "Ethnicity",
                             sex ~ "Sex",
