@@ -49,6 +49,7 @@ spss_data <- read_sav("GU20FINLvSplit_V3.SAV")
 # v3 == Household Density Stratum Code
 # v4 == Primary Sampling Unit
 # v75 == Calculated Final Weight
+# AGE == Numerical age of respondent
 # v140 == Age stratified in 6 groups
 # SEXVAR == Respondent Sex
 # Ethnic1 == Ethnicity
@@ -68,6 +69,7 @@ guam_data <- spss_data %>%
   select(v3,
          v4,
          v75,
+         AGE,
          SEXVAR,
          v145,
          Ethnic1,
@@ -376,6 +378,8 @@ table4_df <- guam_data %>%
     v3,
     v4,
     v75,
+    AGE,
+    sex,
     gout_status,
     betel_nut
   )
@@ -407,13 +411,40 @@ table_regression <- tbl_regression(logit_model,
                                      betel_nut ~ "Betel Nut Use"
                                    ),
                                    pvalue_fun= ~ style_pvalue(.x, digits = 3)
-                                   ) %>% 
+                                   ) 
+
+### Adjust regression model by AGE and Sex
+logit_adjusted <- svyglm(
+  formula = gout_status ~ betel_nut + AGE + sex,
+  design = table4_survey,
+  family = binomial(link = "logit")
+)
+
+summary(logit_adjusted)
+
+
+table_regression_adjusted <- tbl_regression(logit_adjusted, 
+                                   exponentiate = TRUE,
+                                   include = c(betel_nut),
+                                   show_single_row = betel_nut,
+                                   label = list(
+                                     betel_nut ~ "Betel Nut Use"
+                                   ),
+                                   pvalue_fun= ~ style_pvalue(.x, digits = 3)
+) 
+
+##### Combine Regression Table (Unadjusted & Adjusted)
+merged_table <- tbl_merge(
+  tbls = list(table_regression, table_regression_adjusted),
+  tab_spanner = c("**Unadjusted**", "**Adjusted**")
+  ) %>% 
   as_gt() %>%
-  gt::tab_header("Table 4: Logistic Regression - Betel Nut Use & Gout") %>% 
+  gt::tab_header("Table 4: Binary Logistic Regression (Areca Nut Use & Gout)") %>% 
   gt::tab_options(
     table.font.size = "small",
     data_row.padding = gt::px(1)
-  )
+  ) %>% 
+  gt::tab_footnote("Regression adjusted by age and sex.")
 
 ```
 
